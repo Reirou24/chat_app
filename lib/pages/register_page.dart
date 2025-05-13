@@ -1,3 +1,4 @@
+import 'package:chat_app/services/auth/auth_service.dart';
 import 'package:chat_app/components/button_widget.dart';
 import 'package:chat_app/components/textfield_widget.dart';
 import 'package:flutter/material.dart';
@@ -12,8 +13,25 @@ class RegisterPage extends StatelessWidget {  //FOR EMAIL AND PW CONTROLLERS
   RegisterPage({super.key, this.onTap});
 
   // REGISTER METHOD
-  void register() {
+  void register(BuildContext context) async {
+    final _authService = AuthService();
 
+    if (_passController.text == _confPassController.text) {
+      try {
+        _authService.signUpWithEmailPass(
+          _emailController.text,
+          _passController.text,
+        );
+      } catch (e) {
+        showDialog(context: context, builder: (context) => AlertDialog(
+        title: Text(e.toString())
+      ));
+      }
+    } else {
+      showDialog(context: context, builder: (context) => AlertDialog(
+        title: Text("Passwords do not match!")
+      ));
+    }
   }
 
   @override
@@ -75,7 +93,7 @@ class RegisterPage extends StatelessWidget {  //FOR EMAIL AND PW CONTROLLERS
 
             ButtonWidget(
               text: "Register",
-              onTap: register,
+              onTap: () => register(context),
             ),
             
             const SizedBox(height: 25),
