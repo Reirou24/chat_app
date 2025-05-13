@@ -6,10 +6,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 class ChatPage extends StatefulWidget {
-  final String receiverEmail;
+  final String receiverUsername;
   final String receiverID;
   
-  ChatPage({super.key, required this.receiverEmail, required this.receiverID});
+  ChatPage({super.key, required this.receiverUsername, required this.receiverID});
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -84,10 +84,10 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.receiverEmail),
+        title: Text(widget.receiverUsername),
         centerTitle: true,
         backgroundColor: Colors.transparent,
-        foregroundColor: Colors.grey,
+        foregroundColor: Colors.black,
         elevation: 0,
       ),
       resizeToAvoidBottomInset: true,
@@ -107,7 +107,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildMessageList() {
     String senderID = _authService.getCurrentUser()!.uid;
     return StreamBuilder(
-      stream: _chatServices.getMessaages(widget.receiverID, senderID), 
+      stream: _chatServices.getMessages(widget.receiverID, senderID), 
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Text("Error");
@@ -171,15 +171,14 @@ class _ChatPageState extends State<ChatPage> {
               ),
           ),
           Container(
-            decoration: BoxDecoration(
-              color: Colors.green,
-              shape: BoxShape.circle,
-            ),
             margin: const EdgeInsets.only(right: 25),
             child: IconButton(
               onPressed: sendMessage, 
-              icon: Icon(Icons.arrow_upward)))
-        ],
+              icon: Icon(Icons.send),
+              color: Theme.of(context).colorScheme.primary,
+            )
+          )
+        ],                      
       ),
     );
   }

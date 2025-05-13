@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:chat_app/models/message.dart';
+import 'package:chat_app/services/media_service.dart';
+import 'package:chat_app/services/notification_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -6,6 +10,7 @@ class ChatServices {
   //GET INSTANCE OF FIRESTORE
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final NotificationService _notificationService = NotificationService();
 
   //GET USER STREAM
   Stream<List<Map<String, dynamic>>> getUserStream() {
@@ -24,7 +29,7 @@ class ChatServices {
     //GET USER INFO
     final String currentUserID = _auth.currentUser!.uid;
     final String currentUserEmail = _auth.currentUser!.email!;
-    //when the mssage was sent
+    //when the message was sent
     final Timestamp timestamp = Timestamp.now();
 
     //CREATE NEW MESSAGE
@@ -34,6 +39,7 @@ class ChatServices {
       receiverID: receiverID,
       message: message,
       timestamp: timestamp,
+      isRead: false, // Add isRead field
     );
 
     //CREATE CHAT ROOM ID FOR TWO USERS 
@@ -47,12 +53,52 @@ class ChatServices {
       .collection("chat_rooms")
       .doc(chatRoomID)
       .collection("messages")
-      .add(newMessage.toMap()
+      .add(newMessage.toMap());
+      
+    // Add chat room reference to user's chats collection for both users
+    // This helps to keep track of all chat rooms a user is part of
+    await _firestore
+      .collection("Users")
+      .doc(currentUserID)
+      .collection("chats")
+      .doc(chatRoomID)
+      .set({
+        "receiverID": receiverID,
+        "lastMessageTime": timestamp,
+      });
+      
+    await _firestore
+      .collection("Users")
+      .doc(receiverID)
+      .collection("chats")
+      .doc(chatRoomID)
+      .set({
+        "receiverID": currentUserID,
+        "lastMessageTime": timestamp,
+      });
+      
+    // Send notification
+    // Get sender name
+    DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(currentUserID).get();
+    String senderName = "";
+    if (senderDoc.exists) {
+      Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+      senderName = senderData["username"] ?? senderData["email"];
+    } else {
+      senderName = currentUserEmail;
+    }
+    
+    // Send push notification
+    await _notificationService.sendMessageNotification(
+      senderName: senderName,
+      message: message,
+      receiverID: receiverID,
+      chatRoomID: chatRoomID,
     );
   }
 
-  // GET MESSAGE
-  Stream<QuerySnapshot> getMessaages(String userId, otherUserID) {
+  // GET MESSAGES
+  Stream<QuerySnapshot> getMessages(String userId, otherUserID) {
     List<String> ids = [userId, otherUserID];
     ids.sort();
 
@@ -63,6 +109,87 @@ class ChatServices {
       .collection("messages")
       .orderBy("timestamp", descending: false)
       .snapshots();
+  }
+  
+  // Mark messages as read
+  Future<void> markMessagesAsRead(String otherUserID) async {
+    final String currentUserID = _auth.currentUser!.uid;
+    
+    List<String> ids = [currentUserID, otherUserID];
+    ids.sort();
+    
+    String chatRoomID = ids.join("_");
+    
+    // Get unread messages sent by the other user
+    QuerySnapshot unreadMessages = await _firestore
+      .collection("chat_rooms")
+      .doc(chatRoomID)
+      .collection("messages")
+      .where("senderID", isEqualTo: otherUserID)
+      .where("receiverID", isEqualTo: currentUserID)
+      .where("isRead", isEqualTo: false)
+      .get();
+    
+    // Mark all as read in a batch operation
+    WriteBatch batch = _firestore.batch();
+    
+    for (DocumentSnapshot doc in unreadMessages.docs) {
+      batch.update(doc.reference, {"isRead": true});
+    }
+    
+    await batch.commit();
+  }
+  
+  // Get unread message count for a specific chat
+  Stream<int> getUnreadMessageCountStream(String otherUserID) {
+    final String currentUserID = _auth.currentUser!.uid;
+    
+    List<String> ids = [currentUserID, otherUserID];
+    ids.sort();
+    
+    String chatRoomID = ids.join("_");
+    
+    return _firestore
+      .collection("chat_rooms")
+      .doc(chatRoomID)
+      .collection("messages")
+      .where("senderID", isEqualTo: otherUserID)
+      .where("receiverID", isEqualTo: currentUserID)
+      .where("isRead", isEqualTo: false)
+      .snapshots()
+      .map((snapshot) => snapshot.docs.length);
+  }
+  
+  // Get total unread message count across all chats
+  Stream<int> getTotalUnreadMessageCountStream() {
+    final String currentUserID = _auth.currentUser!.uid;
+    
+    return _firestore
+      .collection("Users")
+      .doc(currentUserID)
+      .collection("chats")
+      .snapshots()
+      .asyncMap((chatRooms) async {
+        int totalUnread = 0;
+        
+        for (DocumentSnapshot chatRoom in chatRooms.docs) {
+          String chatRoomID = chatRoom.id;
+          String otherUserID = (chatRoom.data() as Map<String, dynamic>)["receiverID"];
+          
+          QuerySnapshot unreadMessages = await _firestore
+            .collection("chat_rooms")
+            .doc(chatRoomID)
+            .collection("messages")
+            .where("senderID", isEqualTo: otherUserID)
+            .where("receiverID", isEqualTo: currentUserID)
+            .where("isRead", isEqualTo: false)
+            .get();
+          
+          totalUnread += unreadMessages.docs.length;
+        }
+        
+        return totalUnread;
+      });
   }
   
   // NEW METHODS FOR INVITATION FUNCTIONALITY
@@ -95,6 +222,22 @@ class ChatServices {
       'status': 'pending',
       'timestamp': Timestamp.now(),
     });
+    
+    // Send notification for invitation
+    DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(senderID).get();
+    String senderName = "";
+    if (senderDoc.exists) {
+      Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+      senderName = senderData["username"] ?? senderData["email"];
+    } else {
+      senderName = senderEmail;
+    }
+    
+    await _notificationService.sendMessageNotification(
+      senderName: senderName,
+      message: "Sent you a chat invitation",
+      receiverID: receiverID,
+    );
   }
   
   // Get pending invitations for a user
@@ -203,5 +346,111 @@ class ChatServices {
           
           return contacts;
         });
+  }
+
+  //send media
+  Future<void> sendMediaMessage({required String receiverID, required File mediaFile, required String mediaType, String? message,}) async {
+    try {
+      final String currentUserID = _auth.currentUser!.uid;
+      final String currentUserEmail = _auth.currentUser!.email!;
+      final Timestamp timestamp = Timestamp.now();
+
+      final MediaService mediaService = MediaService();
+      String? mediaURL = await mediaService.uploadFile(
+        file: mediaFile,
+        folderName: 'chat_media/$currentUserID/$receiverID',
+      );
+
+      String? thumbnailURL;
+      if (mediaType == 'video') {
+        File? thumbnailFile = await mediaService.generateVideoThumbnail(mediaFile.path);
+        if (thumbnailFile != null) {
+          thumbnailURL = await mediaService.uploadFile(
+            file: thumbnailFile,
+            folderName: 'chat_media/$currentUserID/$receiverID',
+          );
+        }
+      }
+
+      if (mediaURL == null) throw Exception("Failed to upload media file");
+
+      Message newMessage = Message(
+        senderID: currentUserID,
+        senderEmail: currentUserEmail,
+        receiverID: receiverID,
+        message: message,
+        timestamp: timestamp,
+        isRead: false,
+        mediaURL: mediaURL,
+        mediaType: mediaType,
+        thumbnailURL: thumbnailURL,
+      );
+
+      List<String> ids = [currentUserID, receiverID];
+      ids.sort();
+
+      String chatRoomID = ids.join("_");
+
+      await _firestore
+        .collection("chat_rooms")
+        .doc(chatRoomID)
+        .collection("messages")
+        .add(newMessage.toMap());
+
+      await _firestore
+        .collection("Users")
+        .doc(currentUserID)
+        .collection("chats")
+        .doc(chatRoomID)
+        .set({
+          "receiverID": receiverID,
+          "lastMessageTime": timestamp,
+        });
+
+      await _firestore
+        .collection("Users")
+        .doc(receiverID)
+        .collection("chats")
+        .doc(chatRoomID)
+        .set({
+          "receiverID": currentUserID,
+          "lastMessageTime": timestamp,
+        });
+
+      DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(currentUserID).get();
+      String senderName = "";
+
+      if (senderDoc.exists) {
+        Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+        senderName = senderData["username"] ?? senderData["email"];
+      } else {
+        senderName = currentUserEmail;
+      }
+
+      String notificationMessage = "";
+
+      switch (mediaType) {
+        case 'image':
+          notificationMessage = "Sent an image";
+          break;
+        case 'video':
+          notificationMessage = "Sent a video";
+          break;
+        default:
+          notificationMessage = "Sent a file";
+      }
+
+      if (message != null && message.isNotEmpty) notificationMessage += ": $message";
+
+      await _notificationService.sendMessageNotification(
+        senderName: senderName, 
+        message: notificationMessage, 
+        receiverID: receiverID, 
+        chatRoomID: chatRoomID
+      );
+    } catch (e) {
+      print("Error sending media message: $e");
+      throw e;
+    }
   }
 }

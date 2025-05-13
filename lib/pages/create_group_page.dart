@@ -50,13 +50,6 @@ class _CreateGroupPageState extends State<CreateGroupPage> {
         memberIds,
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Group chat created successfully! Group ID: $groupId"),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-
       Navigator.pop(context, groupId);
     } catch (e) {
       _showError("Failed to create group chat: $e");

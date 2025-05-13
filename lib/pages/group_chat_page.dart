@@ -469,10 +469,6 @@ class _GroupChatPageState extends State<GroupChatPage> {
                       return const Center(child: Text("Error loading messages"));
                     }
                     
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return const Center(child: Text("No messages yet"));
                     }
