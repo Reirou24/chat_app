@@ -41,7 +41,7 @@ class ChatPage extends StatelessWidget {
           ),
 
           _buildUserInput(),
-          
+
         ],
       )
     );
@@ -70,7 +70,22 @@ class ChatPage extends StatelessWidget {
   Widget _buildMessageItem(DocumentSnapshot doc) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
-    return Text(data["message"]);
+    //CURRENT USER -> LEFT
+    bool isCurrentUser = data["senderID"] == _authService.getCurrentUser()!.uid;
+
+    //RECEIVER -> RIGHT
+    var alignment = isCurrentUser ?
+      Alignment.centerRight : Alignment.centerLeft;
+
+    return Container(
+      alignment: alignment,
+      child: Column(
+        crossAxisAlignment: isCurrentUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Text(data["message"]),
+        ],
+      )
+    );
   }
 
   Widget _buildUserInput() {
@@ -83,7 +98,6 @@ class ChatPage extends StatelessWidget {
             hideText: false, 
             ),
         ),
-
         IconButton(onPressed: sendMessage, icon: Icon(Icons.arrow_upward))
       ],
     );
