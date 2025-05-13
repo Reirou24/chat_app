@@ -128,6 +128,13 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildMessageItem(DocumentSnapshot doc) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
+    DateTime timestamp;
+    if (data["timestamp"] != null) {
+      timestamp = (data["timestamp"] as Timestamp).toDate();
+    } else {
+      timestamp = DateTime.now();
+    }
+
     //CURRENT USER -> LEFT
     bool isCurrentUser = data["senderID"] == _authService.getCurrentUser()!.uid;
 
@@ -140,7 +147,11 @@ class _ChatPageState extends State<ChatPage> {
       child: Column(
         crossAxisAlignment: isCurrentUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          ChatBubble(message: data["message"], isSender: isCurrentUser),
+          ChatBubble(
+            message: data["message"], 
+            isSender: isCurrentUser,
+            timestamp: timestamp,
+          ),
         ],
       )
     );

@@ -31,7 +31,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // Send chat invitation
-  void _sendInvitation(String receiverID, String receiverEmail) {
+  void _sendInvitation(String receiverID, String receiverEmail, String? receiverUsername) {
     _chatServices.sendChatInvitation(
       senderID: _authService.getCurrentUser()!.uid,
       senderEmail: _authService.getCurrentUser()!.email!,
@@ -42,8 +42,11 @@ class _HomePageState extends State<HomePage> {
         _pendingInvitations[receiverID] = true;
       });
       
+      // Display username if available, otherwise use email
+      final displayName = receiverUsername?.isNotEmpty == true ? receiverUsername : receiverEmail;
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Invitation sent to $receiverEmail'))
+        SnackBar(content: Text('Invitation sent to $displayName'))
       );
     }).catchError((error) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -119,7 +122,7 @@ class _HomePageState extends State<HomePage> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search users...',
+                hintText: 'Search users by email or username...',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
@@ -254,9 +257,13 @@ class _HomePageState extends State<HomePage> {
         }
 
         return ListView(
-          children: snapshot.data!.map<Widget>((userData) =>
-            UserTileWidget(
-              text: userData["email"],
+          children: snapshot.data!.map<Widget>((userData) {
+            // Get display name - prefer username over email if available
+            final String displayName = userData["username"] != null ? 
+              userData["username"] : userData["email"];
+              
+            return UserTileWidget(
+              text: displayName,
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => 
                   ChatPage(
@@ -265,8 +272,8 @@ class _HomePageState extends State<HomePage> {
                   )
                 ));
               }
-            )
-          ).toList(),
+            );
+          }).toList(),
         );
       },
     );
@@ -296,7 +303,17 @@ class _HomePageState extends State<HomePage> {
           if (_searchQuery.isEmpty) {
             return true;
           } else {
-            return userData["email"].toString().toLowerCase().contains(_searchQuery);
+            // Check if email matches search query
+            bool emailMatch = userData["email"].toString().toLowerCase().contains(_searchQuery);
+            
+            // Check if username matches search query (if username exists)
+            bool usernameMatch = false;
+            if (userData["username"] != null) {
+              usernameMatch = userData["username"].toString().toLowerCase().contains(_searchQuery);
+            }
+            
+            // Return true if either email or username matches
+            return emailMatch || usernameMatch;
           }
         }).toList();
 
@@ -309,6 +326,15 @@ class _HomePageState extends State<HomePage> {
           itemBuilder: (context, index) {
             final userData = filteredUsers[index];
             final bool isPending = _pendingInvitations[userData["uid"]] == true;
+            
+            // Get username if available
+            final String? username = userData["username"];
+            
+            // Get display name - prefer username over email
+            final String displayName = username != null ? username : userData["email"];
+            
+            // Get secondary text (show email if username is primary)
+            final String secondaryText = username != null ? userData["email"] : "";
             
             return StreamBuilder(
               stream: _chatServices.checkInvitationStatus(
@@ -335,15 +361,25 @@ class _HomePageState extends State<HomePage> {
                 
                 return ListTile(
                   leading: CircleAvatar(
-                    child: Text(userData["email"].toString()[0].toUpperCase()),
+                    // Use first letter of username if available, otherwise use email
+                    child: Text(displayName[0].toUpperCase()),
                   ),
-                  title: Text(userData["email"].toString()),
-                  subtitle: statusText.isNotEmpty ? Text(statusText) : null,
+                  title: Text(displayName),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (secondaryText.isNotEmpty) 
+                        Text(secondaryText, style: TextStyle(fontSize: 12)),
+                      if (statusText.isNotEmpty)
+                        Text(statusText),
+                    ],
+                  ),
                   trailing: canInvite
                     ? TextButton(
                         onPressed: () => _sendInvitation(
                           userData["uid"],
                           userData["email"],
+                          username,
                         ),
                         child: const Text("Invite"),
                       )

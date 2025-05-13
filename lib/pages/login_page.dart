@@ -4,8 +4,8 @@ import 'package:chat_app/components/textfield_widget.dart';
 import 'package:flutter/material.dart';
 
 class LoginPage extends StatelessWidget {
-  //FOR EMAIL AND PW CONTROLLERS
-  final TextEditingController _emailController = TextEditingController();
+  //FOR EMAIL/USERNAME AND PW CONTROLLERS
+  final TextEditingController _emailUsernameController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
 
   final void Function()? onTap;
@@ -18,12 +18,11 @@ class LoginPage extends StatelessWidget {
     final authService = AuthService();
 
     try {
-      await authService.signInWithEmailPass(
-        _emailController.text,
+      await authService.signIn(
+        _emailUsernameController.text,
         _passController.text,
       );
     }
-
     catch (e) {
       showDialog(context: context, builder: (context) => AlertDialog(
         title: Text(e.toString())
@@ -59,11 +58,11 @@ class LoginPage extends StatelessWidget {
 
             const SizedBox(height: 25),
 
-            //email textfield
+            //email/username textfield
             TextfieldWidget(
-              hintText: "Email",
+              hintText: "Email or Username",
               hideText: false,
-              controller: _emailController,
+              controller: _emailUsernameController,
             ),
 
             const SizedBox(height: 10),
@@ -78,7 +77,6 @@ class LoginPage extends StatelessWidget {
             const SizedBox(height: 25),
 
             //login button
-
             ButtonWidget(
               text: "Login",
               onTap: () => login(context),
@@ -109,7 +107,6 @@ class LoginPage extends StatelessWidget {
           ]
         )
       )
-        
     );
   }
 }
