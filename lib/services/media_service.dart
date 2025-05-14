@@ -77,21 +77,47 @@ class MediaService {
     }
   }
 
-  //upload to firebase
   Future<String?> uploadFile({required File file, required String folderName}) async {
     try {
-      final String fileName = '${const Uuid().v4()}${path.extension(file.path)}';
-      final Reference ref = _storage.ref().child('$folderName/$fileName');
+      if (!file.existsSync()) {
+        throw Exception("File does not exist at path: ${file.path}");
+      }
 
+      final fileSize = await file.length();
+      if (fileSize == 0) {
+        throw Exception("File is empty: ${file.path}");
+      }
+      final String fileName = '${const Uuid().v4()}${path.extension(file.path)}';
+      
+      final String simplePath = 'chat_media_$fileName';
+      
+      print("Attempting to upload to path: $simplePath");
+      
+      final Reference ref = _storage.ref().child(simplePath);
       final UploadTask uploadTask = ref.putFile(file);
       final TaskSnapshot snapshot = await uploadTask;
-
+      
       final String downloadURL = await snapshot.ref.getDownloadURL();
-
+      print("Upload successful, URL: $downloadURL");
+      
       return downloadURL;
     } catch (e) {
       print("Error uploading file: $e");
-      return null;
+      if (e.toString().contains("object-not-found") || 
+          e.toString().contains("Firebase Storage is not initialized")) {
+        try {
+          print("Attempting to initialize default storage bucket...");
+          await FirebaseStorage.instance.ref().child("init_test").putString("test");
+          print("Storage bucket initialized.");
+          
+          throw Exception("Firebase Storage was not initialized. Please try again.");
+        } catch (initError) {
+          print("Failed to initialize storage: $initError");
+          throw Exception("Could not initialize Firebase Storage. Please check your Firebase setup.");
+        }
+      }
+      
+      throw Exception("Failed to upload file: $e");
     }
   }
 }

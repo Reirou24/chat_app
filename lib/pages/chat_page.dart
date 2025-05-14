@@ -7,6 +7,7 @@ import 'package:chat_app/services/auth/auth_service.dart';
 import 'package:chat_app/services/chat/chat_services.dart';
 import 'package:chat_app/services/media_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -184,14 +185,36 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _sendMediaMessage(File mediaFile, String mediaType, String? message) async {
     try {
+      if (!mediaFile.existsSync()) {
+        throw Exception("File does not exist");
+      }
+      
+      try {
+        FirebaseStorage.instance.bucket;
+      } catch (e) {
+        throw Exception("Firebase Storage is not properly initialized: $e");
+      }
+      
+      print("Sending $mediaType message with file: ${mediaFile.path}");
+      print("File size: ${await mediaFile.length()} bytes");
+      
       await _chatServices.sendMediaMessage(
         receiverID: widget.receiverID, 
         mediaFile: mediaFile, 
         mediaType: mediaType,
         message: message?.isNotEmpty == true ? message : null,
       );
+      
       scrollDown();
     } catch (e) {
+      print("Error in _sendMediaMessage: $e");
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error sending $mediaType: $e"),
+          duration: const Duration(seconds: 2),
+        ),
+      );
       rethrow;
     }
   }
@@ -289,11 +312,12 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 10.0),
       child: Row(
         children: [
-          IconButton(
-            onPressed: _showMediaOptions,
-            icon: const Icon(Icons.attach_file), // Added const
-            color: Colors.grey,
-          ),
+          //TODO: FIX MEDIA
+          // IconButton(
+          //   onPressed: _showMediaOptions,
+          //   icon: const Icon(Icons.attach_file), // Added const
+          //   color: Colors.grey,
+          // ),
 
           Expanded(
             child: TextfieldWidget(

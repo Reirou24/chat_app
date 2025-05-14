@@ -5,6 +5,8 @@ import 'package:chat_app/services/media_service.dart';
 import 'package:chat_app/services/notification_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path/path.dart' as path;
 
 class ChatServices {
   //GET INSTANCE OF FIRESTORE
@@ -17,7 +19,6 @@ class ChatServices {
     return _firestore.collection("Users").snapshots().map((snapshot) {
       return snapshot.docs.map((doc) {
         final user = doc.data();
-        // Add the document ID as uid to the user data
         user['uid'] = doc.id;
         return user;
       }).toList();
@@ -42,7 +43,7 @@ class ChatServices {
       isRead: false, // Add isRead field
     );
 
-    //CREATE CHAT ROOM ID FOR TWO USERS 
+    //CREATE CHAT ROOM ID FOR TWO USERS
     List<String> ids = [currentUserID, receiverID];
     ids.sort(); //SORT TO ENSURE UNIQUENESS
 
@@ -50,44 +51,38 @@ class ChatServices {
 
     //ADD MESSAGES TO DB
     await _firestore
-      .collection("chat_rooms")
-      .doc(chatRoomID)
-      .collection("messages")
-      .add(newMessage.toMap());
-      
-    // Add chat room reference to user's chats collection for both users
-    // This helps to keep track of all chat rooms a user is part of
+        .collection("chat_rooms")
+        .doc(chatRoomID)
+        .collection("messages")
+        .add(newMessage.toMap());
+        
     await _firestore
-      .collection("Users")
-      .doc(currentUserID)
-      .collection("chats")
-      .doc(chatRoomID)
-      .set({
-        "receiverID": receiverID,
-        "lastMessageTime": timestamp,
-      });
-      
+        .collection("Users")
+        .doc(currentUserID)
+        .collection("chats")
+        .doc(chatRoomID)
+        .set({"receiverID": receiverID, "lastMessageTime": timestamp});
+
     await _firestore
-      .collection("Users")
-      .doc(receiverID)
-      .collection("chats")
-      .doc(chatRoomID)
-      .set({
-        "receiverID": currentUserID,
-        "lastMessageTime": timestamp,
-      });
-      
+        .collection("Users")
+        .doc(receiverID)
+        .collection("chats")
+        .doc(chatRoomID)
+        .set({"receiverID": currentUserID, "lastMessageTime": timestamp});
+
     // Send notification
     // Get sender name
-    DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(currentUserID).get();
+    DocumentSnapshot senderDoc =
+        await _firestore.collection("Users").doc(currentUserID).get();
     String senderName = "";
     if (senderDoc.exists) {
-      Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+      Map<String, dynamic> senderData =
+          senderDoc.data() as Map<String, dynamic>;
       senderName = senderData["username"] ?? senderData["email"];
     } else {
       senderName = currentUserEmail;
     }
-    
+
     // Send push notification
     await _notificationService.sendMessageNotification(
       senderName: senderName,
@@ -104,79 +99,25 @@ class ChatServices {
 
     String chatRoomID = ids.join("_");
     return _firestore
-      .collection("chat_rooms")
-      .doc(chatRoomID)
-      .collection("messages")
-      .orderBy("timestamp", descending: false)
-      .snapshots();
+        .collection("chat_rooms")
+        .doc(chatRoomID)
+        .collection("messages")
+        .orderBy("timestamp", descending: false)
+        .snapshots();
   }
-  
+
   // Mark messages as read
   Future<void> markMessagesAsRead(String otherUserID) async {
     final String currentUserID = _auth.currentUser!.uid;
-    
+
     List<String> ids = [currentUserID, otherUserID];
     ids.sort();
-    
+
     String chatRoomID = ids.join("_");
-    
+
     // Get unread messages sent by the other user
-    QuerySnapshot unreadMessages = await _firestore
-      .collection("chat_rooms")
-      .doc(chatRoomID)
-      .collection("messages")
-      .where("senderID", isEqualTo: otherUserID)
-      .where("receiverID", isEqualTo: currentUserID)
-      .where("isRead", isEqualTo: false)
-      .get();
-    
-    // Mark all as read in a batch operation
-    WriteBatch batch = _firestore.batch();
-    
-    for (DocumentSnapshot doc in unreadMessages.docs) {
-      batch.update(doc.reference, {"isRead": true});
-    }
-    
-    await batch.commit();
-  }
-  
-  // Get unread message count for a specific chat
-  Stream<int> getUnreadMessageCountStream(String otherUserID) {
-    final String currentUserID = _auth.currentUser!.uid;
-    
-    List<String> ids = [currentUserID, otherUserID];
-    ids.sort();
-    
-    String chatRoomID = ids.join("_");
-    
-    return _firestore
-      .collection("chat_rooms")
-      .doc(chatRoomID)
-      .collection("messages")
-      .where("senderID", isEqualTo: otherUserID)
-      .where("receiverID", isEqualTo: currentUserID)
-      .where("isRead", isEqualTo: false)
-      .snapshots()
-      .map((snapshot) => snapshot.docs.length);
-  }
-  
-  // Get total unread message count across all chats
-  Stream<int> getTotalUnreadMessageCountStream() {
-    final String currentUserID = _auth.currentUser!.uid;
-    
-    return _firestore
-      .collection("Users")
-      .doc(currentUserID)
-      .collection("chats")
-      .snapshots()
-      .asyncMap((chatRooms) async {
-        int totalUnread = 0;
-        
-        for (DocumentSnapshot chatRoom in chatRooms.docs) {
-          String chatRoomID = chatRoom.id;
-          String otherUserID = (chatRoom.data() as Map<String, dynamic>)["receiverID"];
-          
-          QuerySnapshot unreadMessages = await _firestore
+    QuerySnapshot unreadMessages =
+        await _firestore
             .collection("chat_rooms")
             .doc(chatRoomID)
             .collection("messages")
@@ -184,16 +125,73 @@ class ChatServices {
             .where("receiverID", isEqualTo: currentUserID)
             .where("isRead", isEqualTo: false)
             .get();
-          
-          totalUnread += unreadMessages.docs.length;
-        }
-        
-        return totalUnread;
-      });
+
+    // Mark all as read in a batch operation
+    WriteBatch batch = _firestore.batch();
+
+    for (DocumentSnapshot doc in unreadMessages.docs) {
+      batch.update(doc.reference, {"isRead": true});
+    }
+
+    await batch.commit();
   }
-  
+
+  // Get unread message count for a specific chat
+  Stream<int> getUnreadMessageCountStream(String otherUserID) {
+    final String currentUserID = _auth.currentUser!.uid;
+
+    List<String> ids = [currentUserID, otherUserID];
+    ids.sort();
+
+    String chatRoomID = ids.join("_");
+
+    return _firestore
+        .collection("chat_rooms")
+        .doc(chatRoomID)
+        .collection("messages")
+        .where("senderID", isEqualTo: otherUserID)
+        .where("receiverID", isEqualTo: currentUserID)
+        .where("isRead", isEqualTo: false)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
+  // Get total unread message count across all chats
+  Stream<int> getTotalUnreadMessageCountStream() {
+    final String currentUserID = _auth.currentUser!.uid;
+
+    return _firestore
+        .collection("Users")
+        .doc(currentUserID)
+        .collection("chats")
+        .snapshots()
+        .asyncMap((chatRooms) async {
+          int totalUnread = 0;
+
+          for (DocumentSnapshot chatRoom in chatRooms.docs) {
+            String chatRoomID = chatRoom.id;
+            String otherUserID =
+                (chatRoom.data() as Map<String, dynamic>)["receiverID"];
+
+            QuerySnapshot unreadMessages =
+                await _firestore
+                    .collection("chat_rooms")
+                    .doc(chatRoomID)
+                    .collection("messages")
+                    .where("senderID", isEqualTo: otherUserID)
+                    .where("receiverID", isEqualTo: currentUserID)
+                    .where("isRead", isEqualTo: false)
+                    .get();
+
+            totalUnread += unreadMessages.docs.length;
+          }
+
+          return totalUnread;
+        });
+  }
+
   // NEW METHODS FOR INVITATION FUNCTIONALITY
-  
+
   // Send chat invitation
   Future<void> sendChatInvitation({
     required String senderID,
@@ -202,17 +200,18 @@ class ChatServices {
     required String receiverEmail,
   }) async {
     // Check if an invitation already exists
-    final existingQuery = await _firestore
-        .collection("invitations")
-        .where('senderID', isEqualTo: senderID)
-        .where('receiverID', isEqualTo: receiverID)
-        .get();
-    
+    final existingQuery =
+        await _firestore
+            .collection("invitations")
+            .where('senderID', isEqualTo: senderID)
+            .where('receiverID', isEqualTo: receiverID)
+            .get();
+
     if (existingQuery.docs.isNotEmpty) {
       // Invitation already exists, don't create a duplicate
       return;
     }
-    
+
     // Create new invitation
     await _firestore.collection("invitations").add({
       'senderID': senderID,
@@ -222,26 +221,30 @@ class ChatServices {
       'status': 'pending',
       'timestamp': Timestamp.now(),
     });
-    
+
     // Send notification for invitation
-    DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(senderID).get();
+    DocumentSnapshot senderDoc =
+        await _firestore.collection("Users").doc(senderID).get();
     String senderName = "";
     if (senderDoc.exists) {
-      Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+      Map<String, dynamic> senderData =
+          senderDoc.data() as Map<String, dynamic>;
       senderName = senderData["username"] ?? senderData["email"];
     } else {
       senderName = senderEmail;
     }
-    
+
     await _notificationService.sendMessageNotification(
       senderName: senderName,
       message: "Sent you a chat invitation",
       receiverID: receiverID,
     );
   }
-  
+
   // Get pending invitations for a user
-  Stream<List<Map<String, dynamic>>> getPendingInvitationsStream(String userId) {
+  Stream<List<Map<String, dynamic>>> getPendingInvitationsStream(
+    String userId,
+  ) {
     return _firestore
         .collection("invitations")
         .where('receiverID', isEqualTo: userId)
@@ -259,46 +262,44 @@ class ChatServices {
           }).toList();
         });
   }
-  
+
   // Accept an invitation
   Future<void> acceptInvitation(String invitationId) async {
-    await _firestore
-        .collection("invitations")
-        .doc(invitationId)
-        .update({'status': 'accepted'});
+    await _firestore.collection("invitations").doc(invitationId).update({
+      'status': 'accepted',
+    });
   }
-  
+
   // Decline an invitation
   Future<void> declineInvitation(String invitationId) async {
-    await _firestore
-        .collection("invitations")
-        .doc(invitationId)
-        .delete();
+    await _firestore.collection("invitations").doc(invitationId).delete();
   }
-  
+
   // Check invitation status between two users
   Stream<String?> checkInvitationStatus(String userId1, String userId2) {
     return _firestore
         .collection("invitations")
-        .where(Filter.or(
-          Filter.and(
-            Filter('senderID', isEqualTo: userId1),
-            Filter('receiverID', isEqualTo: userId2),
+        .where(
+          Filter.or(
+            Filter.and(
+              Filter('senderID', isEqualTo: userId1),
+              Filter('receiverID', isEqualTo: userId2),
+            ),
+            Filter.and(
+              Filter('senderID', isEqualTo: userId2),
+              Filter('receiverID', isEqualTo: userId1),
+            ),
           ),
-          Filter.and(
-            Filter('senderID', isEqualTo: userId2),
-            Filter('receiverID', isEqualTo: userId1),
-          ),
-        ))
+        )
         .snapshots()
         .map((snapshot) {
           if (snapshot.docs.isEmpty) {
             return null;
           }
-          
+
           final data = snapshot.docs.first.data();
           final status = data['status'];
-          
+
           // Determine if this user sent or received the invitation
           if (status == 'pending') {
             if (data['senderID'] == userId1) {
@@ -307,150 +308,141 @@ class ChatServices {
               return 'received'; // Current user received the invitation
             }
           }
-          
+
           return status;
         });
   }
-  
+
   // Get stream of user contacts (users with accepted invitations)
   Stream<List<Map<String, dynamic>>> getUserContactsStream(String userId) {
     return _firestore
         .collection("invitations")
         .where('status', isEqualTo: 'accepted')
-        .where(Filter.or(
-          Filter('senderID', isEqualTo: userId),
-          Filter('receiverID', isEqualTo: userId),
-        ))
+        .where(
+          Filter.or(
+            Filter('senderID', isEqualTo: userId),
+            Filter('receiverID', isEqualTo: userId),
+          ),
+        )
         .snapshots()
         .asyncMap((snapshot) async {
           List<Map<String, dynamic>> contacts = [];
-          
+
           for (var doc in snapshot.docs) {
             final data = doc.data();
-            String contactId = data['senderID'] == userId 
-                ? data['receiverID'] 
-                : data['senderID'];
-            
+            String contactId =
+                data['senderID'] == userId
+                    ? data['receiverID']
+                    : data['senderID'];
+
             // Get user details
-            DocumentSnapshot userDoc = await _firestore
-                .collection("Users")
-                .doc(contactId)
-                .get();
-            
+            DocumentSnapshot userDoc =
+                await _firestore.collection("Users").doc(contactId).get();
+
             if (userDoc.exists) {
               final userData = userDoc.data() as Map<String, dynamic>;
               userData['uid'] = contactId;
               contacts.add(userData);
             }
           }
-          
+
           return contacts;
         });
   }
 
+  String getChatID(String userID1, String userID2) {
+    List<String> ids = [userID1, userID2];
+    ids.sort();
+    return ids.join("_");
+  }
+
   //send media
-  Future<void> sendMediaMessage({required String receiverID, required File mediaFile, required String mediaType, String? message,}) async {
+  Future<void> sendMediaMessage({
+    required String receiverID,
+    required File mediaFile,
+    required String mediaType,
+    String? message,
+  }) async {
     try {
-      final String currentUserID = _auth.currentUser!.uid;
-      final String currentUserEmail = _auth.currentUser!.email!;
-      final Timestamp timestamp = Timestamp.now();
+      final String currentUserID = FirebaseAuth.instance.currentUser!.uid;
+      final String fileName =
+          '${DateTime.now().millisecondsSinceEpoch}_${path.basename(mediaFile.path)}';
+      final String chatID = getChatID(currentUserID, receiverID);
 
-      final MediaService mediaService = MediaService();
-      String? mediaURL = await mediaService.uploadFile(
-        file: mediaFile,
-        folderName: 'chat_media/$currentUserID/$receiverID',
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('chat_media')
+          .child(chatID)
+          .child(fileName);
+
+      final metadata = SettableMetadata(
+        contentType:
+            mediaType.startsWith('image')
+                ? 'image/jpeg'
+                : (mediaType.startsWith('video')
+                    ? 'video/mp4'
+                    : 'application/octet-stream'),
       );
 
-      String? thumbnailURL;
-      if (mediaType == 'video') {
-        File? thumbnailFile = await mediaService.generateVideoThumbnail(mediaFile.path);
-        if (thumbnailFile != null) {
-          thumbnailURL = await mediaService.uploadFile(
-            file: thumbnailFile,
-            folderName: 'chat_media/$currentUserID/$receiverID',
-          );
-        }
-      }
+      final uploadTask = storageRef.putFile(mediaFile, metadata);
+      final snapshot = await uploadTask;
+      final String downloadURL = await snapshot.ref.getDownloadURL();
 
-      if (mediaURL == null) throw Exception("Failed to upload media file");
-
-      Message newMessage = Message(
-        senderID: currentUserID,
-        senderEmail: currentUserEmail,
-        receiverID: receiverID,
-        message: message,
-        timestamp: timestamp,
-        isRead: false,
-        mediaURL: mediaURL,
-        mediaType: mediaType,
-        thumbnailURL: thumbnailURL,
-      );
-
-      List<String> ids = [currentUserID, receiverID];
-      ids.sort();
-
-      String chatRoomID = ids.join("_");
+      final messageData = {
+        'senderID': currentUserID,
+        'senderEmail': _auth.currentUser!.email!,
+        'receiverID': receiverID,
+        'message': message,
+        'timestamp': FieldValue.serverTimestamp(),
+        'mediaURL': downloadURL,
+        'mediaType': mediaType,
+        'isRead': false,
+      };
+      await _firestore
+          .collection("chat_rooms")
+          .doc(chatID)
+          .collection("messages")
+          .add(messageData);
 
       await _firestore
-        .collection("chat_rooms")
-        .doc(chatRoomID)
-        .collection("messages")
-        .add(newMessage.toMap());
+          .collection("Users")
+          .doc(currentUserID)
+          .collection("chats")
+          .doc(chatID)
+          .set({
+            "receiverID": receiverID, 
+            "lastMessageTime": FieldValue.serverTimestamp()
+          });
 
       await _firestore
-        .collection("Users")
-        .doc(currentUserID)
-        .collection("chats")
-        .doc(chatRoomID)
-        .set({
-          "receiverID": receiverID,
-          "lastMessageTime": timestamp,
-        });
-
-      await _firestore
-        .collection("Users")
-        .doc(receiverID)
-        .collection("chats")
-        .doc(chatRoomID)
-        .set({
-          "receiverID": currentUserID,
-          "lastMessageTime": timestamp,
-        });
-
-      DocumentSnapshot senderDoc = await _firestore.collection("Users").doc(currentUserID).get();
+          .collection("Users")
+          .doc(receiverID)
+          .collection("chats")
+          .doc(chatID)
+          .set({
+            "receiverID": currentUserID, 
+            "lastMessageTime": FieldValue.serverTimestamp()
+          });
+          
+      DocumentSnapshot senderDoc =
+          await _firestore.collection("Users").doc(currentUserID).get();
       String senderName = "";
-
       if (senderDoc.exists) {
-        Map<String, dynamic> senderData = senderDoc.data() as Map<String, dynamic>;
+        Map<String, dynamic> senderData =
+            senderDoc.data() as Map<String, dynamic>;
         senderName = senderData["username"] ?? senderData["email"];
       } else {
-        senderName = currentUserEmail;
+        senderName = _auth.currentUser!.email!;
       }
-
-      String notificationMessage = "";
-
-      switch (mediaType) {
-        case 'image':
-          notificationMessage = "Sent an image";
-          break;
-        case 'video':
-          notificationMessage = "Sent a video";
-          break;
-        default:
-          notificationMessage = "Sent a file";
-      }
-
-      if (message != null && message.isNotEmpty) notificationMessage += ": $message";
-
       await _notificationService.sendMessageNotification(
-        senderName: senderName, 
-        message: notificationMessage, 
-        receiverID: receiverID, 
-        chatRoomID: chatRoomID
+        senderName: senderName,
+        message: message ?? "Sent a $mediaType",
+        receiverID: receiverID,
+        chatRoomID: chatID,
       );
     } catch (e) {
-      print("Error sending media message: $e");
-      throw e;
+      print("Error in sendMediaMessage: $e");
+      rethrow;
     }
   }
 }
