@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:chat_app/components/media_chat_bubble.dart';
 import 'package:chat_app/services/group_chat_service.dart';
 import 'package:chat_app/services/auth/auth_service.dart';
+import 'package:chat_app/services/media_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 class GroupChatPage extends StatefulWidget {
   final String groupId;
@@ -22,25 +27,44 @@ class _GroupChatPageState extends State<GroupChatPage> {
   final GroupChatService _groupChatService = GroupChatService();
   final AuthService _authService = AuthService();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final MediaService _mediaService = MediaService(); // Added MediaService
   
   // For rename dialog
   final TextEditingController _groupNameController = TextEditingController();
   
   List<Map<String, dynamic>> _members = [];
   bool _isLoading = true;
+
+  // For scrolling to the latest message
+  final ScrollController _scrollController = ScrollController();
   
   @override
   void initState() {
     super.initState();
     _loadGroupMembers();
     _groupNameController.text = widget.groupName;
+    
+    // Add delay to scroll to the bottom when initialized
+    Future.delayed(const Duration(milliseconds: 500), () => _scrollToBottom());
   }
   
   @override
   void dispose() {
     _messageController.dispose();
     _groupNameController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  // Scroll to bottom method
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.fastOutSlowIn,
+      );
+    }
   }
   
   // Load group members
@@ -98,9 +122,129 @@ class _GroupChatPageState extends State<GroupChatPage> {
           _messageController.text.trim(),
         );
         _messageController.clear();
+        _scrollToBottom();
       } catch (e) {
         print("Error sending message: $e");
       }
+    }
+  }
+
+  // Show media options (similar to ChatPage)
+  void _showMediaOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera),
+                title: const Text('Take a photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam),
+                title: const Text('Record a video'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickVideo(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.video_library),
+                title: const Text('Choose a video'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickVideo(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file),
+                title: const Text('Attach a file'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickFile();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Pick image method
+  Future<void> _pickImage(ImageSource source) async {
+    final File? image = await _mediaService.pickImage(source: source);
+    if (image != null) _showMediaMessageDialog(image, 'image');
+  }
+
+  // Pick video method
+  Future<void> _pickVideo(ImageSource source) async {
+    final File? video = await _mediaService.pickVideo(source: source);
+    if (video != null) _showMediaMessageDialog(video, 'video');
+  }
+
+  // Pick file method
+  Future<void> _pickFile() async {
+    final File? file = await _mediaService.pickFile();
+    if (file != null) _showMediaMessageDialog(file, 'file');
+  }
+
+  // Show media message dialog to add optional caption
+  void _showMediaMessageDialog(File file, String type) {
+    final TextEditingController captionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add a caption?'),
+        content: TextField(
+          controller: captionController,
+          decoration: const InputDecoration(hintText: 'Optional message...'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _sendMediaMessage(file, type, captionController.text);
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Send media message
+  Future<void> _sendMediaMessage(File mediaFile, String mediaType, String? message) async {
+    try {
+      await _groupChatService.sendGroupMediaMessage(
+        groupId: widget.groupId,
+        mediaFile: mediaFile,
+        mediaType: mediaType,
+        message: message?.isNotEmpty == true ? message : null,
+      );
+      _scrollToBottom();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to send media: $e")),
+      );
     }
   }
   
@@ -341,7 +485,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
     }
   }
   
-  // Build message bubble
+  // Build message bubble - updated to handle media messages
   Widget _buildMessageBubble(DocumentSnapshot message) {
     final isCurrentUser = message["senderId"] == _authService.getCurrentUser()!.uid;
     final isSystemMessage = message["isSystemMessage"] == true;
@@ -366,12 +510,49 @@ class _GroupChatPageState extends State<GroupChatPage> {
           borderRadius: BorderRadius.circular(16),
         ),
         child: Text(
-          message["message"],
+          message["message"] ?? "",
           style: const TextStyle(
             fontStyle: FontStyle.italic,
             color: Colors.black54,
           ),
           textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    // Check if this is a media message
+    final String? mediaURL = message["mediaURL"];
+    final String? mediaType = message["mediaType"];
+    
+    if (mediaURL != null && mediaType != null) {
+      // Media message
+      return Align(
+        alignment: isCurrentUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: Column(
+          crossAxisAlignment: isCurrentUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (!isCurrentUser)
+              Padding(
+                padding: const EdgeInsets.only(left: 12, bottom: 4),
+                child: Text(
+                  senderName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            MediaChatBubble(
+              mediaURL: mediaURL,
+              mediaType: mediaType,
+              thumbnailURL: message["thumbnailURL"],
+              message: message["message"],
+              isSender: isCurrentUser,
+              timestamp: message["timestamp"] != null 
+                  ? (message["timestamp"] as Timestamp).toDate() 
+                  : DateTime.now(),
+            ),
+          ],
         ),
       );
     }
@@ -404,7 +585,7 @@ class _GroupChatPageState extends State<GroupChatPage> {
                 ),
               ),
             Text(
-              message["message"],
+              message["message"] ?? "",
               style: TextStyle(
                 color: isCurrentUser ? Colors.white : Colors.black,
               ),
@@ -472,8 +653,12 @@ class _GroupChatPageState extends State<GroupChatPage> {
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return const Center(child: Text("No messages yet"));
                     }
+
+                    // Scroll to bottom after messages load
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
                     
                     return ListView.builder(
+                      controller: _scrollController,
                       itemCount: snapshot.data!.docs.length,
                       itemBuilder: (context, index) {
                         final message = snapshot.data!.docs[index];
@@ -489,6 +674,11 @@ class _GroupChatPageState extends State<GroupChatPage> {
                 padding: const EdgeInsets.all(8.0),
                 child: Row(
                   children: [
+                    IconButton(
+                      icon: const Icon(Icons.attach_file),
+                      onPressed: _showMediaOptions,
+                      color: Colors.grey,
+                    ),
                     Expanded(
                       child: TextField(
                         controller: _messageController,
